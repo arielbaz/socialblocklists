@@ -1,0 +1,27 @@
+[package]
+name = "geder-android"
+description = "Bibliothèque native de l'application Android : moteur + tunnel, liaison JNI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+# libgeder.so, chargée par System.loadLibrary("geder").
+name = "geder"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+geder-core.workspace = true
+geder-tunnel = { path = "../tunnel" }
+ed25519-dalek.workspace = true
+jni = { version = "0.21", default-features = false }
+log = "0.4"
+tun = { version = "0.8.14", optional = true }
+
+[features]
+# Expose nativeTestCreateTun pour core/jni-test (Linux, root). Jamais dans l'APK.
+jni-test = ["dep:tun"]
+
+[target.'cfg(target_os = "android")'.dependencies]
+android_logger = "0.15"

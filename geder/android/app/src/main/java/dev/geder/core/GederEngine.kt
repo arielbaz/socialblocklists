@@ -5,7 +5,8 @@ import kotlin.concurrent.read
 import kotlin.concurrent.write
 
 /**
- * Enveloppe Kotlin du moteur Rust `geder-core` (voir core/src/ffi_android.rs).
+ * Enveloppe Kotlin de la bibliothèque native `libgeder` : moteur et tunnel
+ * (voir android-ffi/src/lib.rs).
  *
  * Sûre depuis plusieurs threads. Après [close], chaque appel renvoie la réponse
  * « refus » du moteur (handle nul) au lieu d'accéder à la mémoire libérée.
@@ -32,6 +33,28 @@ class GederEngine(
 
         data object Drop : DnsPacketResult
     }
+
+    /**
+     * Rappels du tunnel, appelés depuis ses threads natifs. Les noms et signatures
+     * sont utilisés par la liaison JNI : ne pas les renommer (voir proguard-rules.pro).
+     */
+    interface TunnelCallbacks {
+        /** Sortir la socket `fd` du VPN (`VpnService.protect`). */
+        fun protect(fd: Int): Boolean
+
+        /** Un domaine a été refusé. */
+        fun onBlocked(domain: String)
+    }
+
+    /**
+     * Démarre le tunnel complet sur la TUN `fd` (obtenue par `detachFd()`), dont le
+     * moteur devient propriétaire. Renvoie `null` si le tunnel tourne, sinon la raison.
+     */
+    fun startTunnel(fd: Int, mtu: Int, callbacks: TunnelCallbacks): String? =
+        lock.read { nativeStartTunnel(handle, fd, mtu, callbacks) }
+
+    /** Arrête le tunnel et ferme la TUN. Bloquant (quelques secondes au plus). */
+    fun stopTunnel() = lock.read { nativeStopTunnel(handle) }
 
     /** Charge une liste signée. Renvoie `null` si elle est acceptée, sinon la raison du refus. */
     fun loadList(data: ByteArray): String? = lock.read { nativeLoadList(handle, data) }
@@ -69,7 +92,7 @@ class GederEngine(
 
     companion object {
         init {
-            System.loadLibrary("geder_core")
+            System.loadLibrary("geder")
         }
 
         const val ALLOW = 0
@@ -95,5 +118,7 @@ class GederEngine(
         @JvmStatic private external fun nativeHandleDnsPacket(handle: Long, packet: ByteArray): ByteArray?
         @JvmStatic private external fun nativeCompleteDnsPacket(handle: Long, packet: ByteArray, response: ByteArray): ByteArray?
         @JvmStatic private external fun nativePurge(handle: Long)
+        @JvmStatic private external fun nativeStartTunnel(handle: Long, fd: Int, mtu: Int, callbacks: Any): String?
+        @JvmStatic private external fun nativeStopTunnel(handle: Long)
     }
 }

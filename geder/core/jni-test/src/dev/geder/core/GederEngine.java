@@ -14,4 +14,9 @@ final class GederEngine {
     static native byte[] nativeHandleDnsPacket(long handle, byte[] packet);
     static native byte[] nativeCompleteDnsPacket(long handle, byte[] packet, byte[] response);
     static native void nativePurge(long handle);
+    static native String nativeStartTunnel(long handle, int fd, int mtu, Object callbacks);
+    static native void nativeStopTunnel(long handle);
+
+    /** Test seulement (option jni-test) : TUN Linux 10.201.0.1/24. */
+    static native int nativeTestCreateTun();
 }

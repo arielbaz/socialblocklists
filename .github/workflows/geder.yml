@@ -11,7 +11,7 @@ defaults:
     working-directory: geder
 
 jobs:
-  core:
+  rust:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,10 +25,15 @@ jobs:
       - name: Format
         run: cargo fmt --all -- --check
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --features geder-core/android -- -D warnings
-      - name: Tests du moteur
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Tests
         run: cargo test --workspace
       - name: Listes de départ valides
         run: cargo run -q -p geder-list -- check lists/*.txt
-      - name: Liaison JNI (JVM de bureau)
-        run: ./core/jni-test/run.sh
+      - name: Tunnel de bout en bout (interface TUN, root)
+        run: |
+          bin=$(cargo test -p geder-tunnel --test tun_e2e --no-run --message-format=json \
+            | jq -r 'select(.target.name == "tun_e2e" and .executable != null) | .executable')
+          sudo "$bin" --ignored
+      - name: Liaison JNI, tunnel compris (JVM de bureau, root)
+        run: ./core/jni-test/run.sh --tun

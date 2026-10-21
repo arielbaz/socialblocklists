@@ -1,6 +1,12 @@
 package dev.geder.core;
 
 import java.io.ByteArrayOutputStream;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.net.InetAddress;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -14,7 +20,7 @@ public final class JniSmokeTest {
     static int failures = 0;
 
     public static void main(String[] args) throws Exception {
-        System.loadLibrary("geder_core");
+        System.loadLibrary("geder");
         byte[] key = Base64.getDecoder().decode(Files.readString(Path.of(args[0])).trim());
         byte[] signed = Files.readAllBytes(Path.of(args[1]));
         byte[] unsigned = Files.readAllBytes(Path.of(args[2]));
@@ -59,11 +65,69 @@ public final class JniSmokeTest {
         check("handle nul -> refus", !GederEngine.nativeIsDomainAllowed(0, "www.impots.gouv.fr"));
         check("handle nul -> paquet refusé", GederEngine.nativeClassifyPacket(0, new byte[0]) == 17);
 
+        if ("1".equals(System.getenv("GEDER_JNI_TUN"))) {
+            tunnelChecks(key, signed);
+        } else {
+            System.out.println("  (tunnel ignoré : lancer en root avec GEDER_JNI_TUN=1)");
+        }
+
         if (failures > 0) {
             System.err.println(failures + " échec(s)");
             System.exit(1);
         }
         System.out.println("JNI : tous les contrôles passent");
+    }
+
+    /** Rappels appelés par le tunnel Rust depuis ses propres threads. */
+    static final class Callbacks {
+        final AtomicInteger protects = new AtomicInteger();
+        final Set<String> blocked = ConcurrentHashMap.newKeySet();
+
+        public boolean protect(int fd) {
+            protects.incrementAndGet();
+            return fd > 0;
+        }
+
+        public void onBlocked(String domain) {
+            blocked.add(domain);
+        }
+    }
+
+    static void tunnelChecks(byte[] key, byte[] signed) throws Exception {
+        byte[] resolver = {10, (byte) 201, 0, 53};
+        long h = GederEngine.nativeNew(new byte[][] {key}, resolver, new byte[0]);
+        check("tunnel : liste chargée", GederEngine.nativeLoadList(h, signed) == null);
+        int fd = GederEngine.nativeTestCreateTun();
+        check("tunnel : TUN créée (fd " + fd + ")", fd > 0);
+        Callbacks cb = new Callbacks();
+        String err = GederEngine.nativeStartTunnel(h, fd, 1500, cb);
+        check("tunnel : démarré (" + err + ")", err == null);
+        check("tunnel : second démarrage refusé", GederEngine.nativeStartTunnel(h, fd, 1500, cb) != null);
+
+        try (DatagramSocket s = new DatagramSocket()) {
+            s.setSoTimeout(5000);
+            InetAddress res = InetAddress.getByAddress(resolver);
+            byte[] q = dnsQuery(21, "www.youtube.com");
+            s.send(new DatagramPacket(q, q.length, res, 53));
+            byte[] buf = new byte[512];
+            DatagramPacket p = new DatagramPacket(buf, buf.length);
+            s.receive(p);
+            check("tunnel : NXDOMAIN via la TUN", (buf[3] & 0x0f) == 3);
+            check("tunnel : onBlocked rappelé", cb.blocked.contains("www.youtube.com"));
+
+            // Domaine autorisé : le tunnel ouvre une socket amont, protégée par le rappel Java.
+            q = dnsQuery(22, "www.impots.gouv.fr");
+            s.send(new DatagramPacket(q, q.length, res, 53));
+            long deadline = System.currentTimeMillis() + 5000;
+            while (cb.protects.get() == 0 && System.currentTimeMillis() < deadline) Thread.sleep(50);
+            check("tunnel : protect() rappelé (" + cb.protects.get() + ")", cb.protects.get() > 0);
+        }
+
+        GederEngine.nativeStopTunnel(h);
+        // Après l'arrêt, un nouveau démarrage est tenté (ici refusé seulement pour fd invalide).
+        String again = GederEngine.nativeStartTunnel(h, -1, 1500, cb);
+        check("tunnel : arrêté, redémarrage possible (" + again + ")", again != null && !again.contains("déjà"));
+        GederEngine.nativeFree(h);
     }
 
     static void check(String what, boolean ok) {

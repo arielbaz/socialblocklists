@@ -361,13 +361,19 @@ impl Engine {
         now: Instant,
     ) -> Result<Vec<u8>, EngineError> {
         let pkt = Packet::parse(ip_packet)?;
-        let query = Message::parse(pkt.payload)?;
+        self.accept_dns_response(pkt.payload, response, now)?;
+        Ok(packet::build_udp_reply(&pkt, response)?)
+    }
+
+    /// Vérifie qu'une réponse amont correspond bien à la requête transmise (même
+    /// identifiant, même question), puis lie ses IP. Renvoie le nombre d'IP liées.
+    pub fn accept_dns_response(&mut self, query: &[u8], response: &[u8], now: Instant) -> Result<usize, EngineError> {
+        let query = Message::parse(query)?;
         let reply = Message::parse(response)?;
         if !reply.is_response() || reply.id != query.id || reply.questions != query.questions {
             return Err(EngineError::DnsMismatch);
         }
-        self.handle_dns_response(response, now)?;
-        Ok(packet::build_udp_reply(&pkt, response)?)
+        self.handle_dns_response(response, now)
     }
 
     /// Supprime les liaisons expirées (à appeler périodiquement).

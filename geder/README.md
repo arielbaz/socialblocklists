@@ -1,8 +1,9 @@
 # GEDER — filtre Internet en liste blanche (Aribaz)
 
 Ce dossier est le monorepo technique de GEDER, construit à partir du dossier de projet
-« GEDER — Dossier de projet Aribaz ». Il démarre par le cœur du produit : le moteur de
-filtrage partagé et le prototype Android prévu en semaine 2 de la feuille de route.
+« GEDER — Dossier de projet Aribaz ». Il contient le cœur du produit : le moteur de
+filtrage partagé, le tunnel complet qui fait passer tout le trafic par ce moteur, et le
+prototype Android prévu en semaine 2 de la feuille de route.
 
 ## Principes
 
@@ -30,8 +31,11 @@ geder/
 │   ├── src/list.rs       Format de liste, signature et vérification Ed25519
 │   ├── src/engine.rs     Le moteur : décisions DNS, connexions, paquets TUN
 │   ├── src/pin.rs        PIN administrateur : Argon2id + blocage progressif
-│   ├── src/ffi_android.rs  Liaison JNI (option `android`)
 │   └── jni-test/         Test de la liaison JNI sur une JVM de bureau
+├── tunnel/               Tunnel complet (geder-tunnel) : pile TCP/IP en espace
+│   │                     utilisateur (ipstack) devant le moteur
+│   └── tests/tun_e2e.rs  Test de bout en bout sur une vraie interface TUN Linux
+├── android-ffi/          libgeder.so pour Android : moteur + tunnel, liaison JNI
 ├── tools/geder-list/     Outil serveur : clés, signature, vérification, test de domaine
 ├── lists/                Listes sources (non signées) : intégrée, France, Israël
 ├── android/              Prototype Android (Kotlin) : VpnService + Device Owner
@@ -79,7 +83,13 @@ cd geder
 cargo test --workspace                      # tests du moteur
 cargo run -p geder-list -- check lists/*.txt
 ./core/jni-test/run.sh                      # liaison JNI, sur JVM de bureau
+./core/jni-test/run.sh --tun                # idem + démarrage du tunnel (sudo)
+sudo -E cargo test -p geder-tunnel --test tun_e2e -- --ignored   # tunnel de bout en bout
 ```
+
+Le test de bout en bout crée une interface TUN Linux et y fait passer de vraies
+connexions : IP non résolue refusée, domaine bloqué (`NXDOMAIN`), domaine autorisé
+résolu puis joignable, SNI interdit coupé, QUIC refusé, UDP relayé, DNS sur TCP.
 
 Outil de listes :
 
@@ -91,20 +101,41 @@ geder-list match lists/base-fr.txt www.impots.gouv.fr www.youtube.com
 ```
 
 La CI (`.github/workflows/geder.yml`) lance le formatage, Clippy, les tests, la
-validation des listes et le test JNI à chaque modification de `geder/`.
+validation des listes, le test de bout en bout du tunnel et le test JNI à chaque
+modification de `geder/`. Sur ce dépôt (un fork), il faut d'abord activer les
+workflows dans l'onglet Actions.
 
 ## Prototype Android
 
-**Étape 1, écrite : « mode DNS ».** Seul le résolveur virtuel `10.111.0.53` est routé
-dans le VPN local. Les domaines hors liste ne se résolvent plus, et les domaines
-autorisés passent par Cloudflare Families (1.1.1.3), qui ajoute un filtre adulte et
-malveillant en seconde couche. Le mode Device Owner verrouille l'appareil : pas de
-réinitialisation, pas de mode sans échec, pas d'ADB, pas de VPN tiers, pas de nouvel
-utilisateur, désinstallation bloquée, VPN toujours actif et verrouillé.
+Le service VPN fonctionne en **tunnel complet** (étape 2, mode par défaut). Tout le
+trafic IPv4 et IPv6 entre dans la TUN, dont le descripteur est confié au tunnel Rust :
 
-> ⚠️ Le code Android n'a pas encore été compilé : le SDK Android n'était pas disponible
-> dans l'environnement où il a été écrit. La partie native (JNI) est testée, mais pas
-> la partie Kotlin. Première tâche sur un poste équipé : `./gradlew assembleDebug`.
+```
+appli ──► TUN ──► pile TCP/IP (ipstack) ──► moteur : autorisé ? ──► socket protégée ──► Internet
+                        │                         │
+                        └── DNS 10.111.0.53 ──────┘  (liste blanche, puis Cloudflare Families)
+```
+
+- Une connexion vers une IP que notre DNS n'a pas renvoyée n'est jamais ouverte. Cela
+  couvre le DoH, les IP codées en dur, les VPN et proxys intégrés (Opera, Tor…).
+- Sur le port 443, le SNI du ClientHello est contrôlé avant la connexion : un site
+  interdit hébergé sur le même CDN qu'un site autorisé reste bloqué.
+- QUIC, DNS sur TLS, DNS vers un autre résolveur, ICMP : refusés.
+- Les sockets sortantes du tunnel sont sorties du VPN par `VpnService.protect`,
+  appelé depuis Rust par un rappel JNI.
+
+Le **mode DNS** (étape 1) reste disponible en secours (`FULL_TUNNEL = false` dans
+`GederVpnService`). Il ne route que le résolveur et reste contournable par une IP codée
+en dur.
+
+Le mode Device Owner verrouille l'appareil : pas de réinitialisation, pas de mode sans
+échec, pas d'ADB, pas de VPN tiers, pas de nouvel utilisateur, désinstallation bloquée,
+VPN toujours actif et verrouillé (sans GEDER, pas de réseau du tout).
+
+> ⚠️ Le code Kotlin n'a pas encore été compilé : le SDK Android n'était pas disponible
+> dans l'environnement où il a été écrit. Tout le code natif est testé sous Linux : le
+> moteur, le tunnel sur une vraie interface TUN, et la liaison JNI, rappels `protect` et
+> `onBlocked` compris. Première tâche sur un poste équipé : `./gradlew assembleDebug`.
 
 Construire :
 
@@ -114,7 +145,7 @@ rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-and
 cargo install cargo-ndk
 
 ./android/scripts/dev-sign-lists.sh         # clé de dev + listes signées dans les assets
-cd android && gradle wrapper && ./gradlew assembleDebug   # compile aussi le moteur Rust
+cd android && gradle wrapper && ./gradlew assembleDebug   # compile aussi libgeder (Rust)
 ```
 
 Tester sur un téléphone de test réinitialisé, sans compte Google :
@@ -122,15 +153,17 @@ Tester sur un téléphone de test réinitialisé, sans compte Google :
 ```bash
 adb install app/build/outputs/apk/debug/app-debug.apk
 adb shell dpm set-device-owner dev.geder.app/.GederAdminReceiver
+adb logcat -s GederVpn GederCore GederLists GederPolicy
 ```
 
 En production, le provisionnement se fait par QR code au premier démarrage, après une
 réinitialisation d'usine. Un exemple de contenu est dans `docs/provisioning-qr.example.json`.
 
-**Étape 2, à faire : « mode tunnel complet ».** Il faut router tout le trafic dans la TUN et
-relayer les connexions acceptées par `classifyPacket`. C'est là que la liaison DNS → IP
-devient hermétique. Il faut un relais TCP/UDP en espace utilisateur (par exemple en Rust
-avec `smoltcp`), qui appelle `Engine::check_tls` sur le flux réassemblé.
+À vérifier en priorité sur téléphone :
+1. Les sites des listes de départ s'ouvrent : il manque sans doute des domaines tiers (CDN).
+2. Les applis bloquées échouent vite plutôt que de rester bloquées en attente.
+3. Le Wi-Fi et la 4G passent de l'un à l'autre sans couper le filtre.
+4. Consommation de batterie et débit, par exemple une vidéo autorisée en HD.
 
 ## Feuille de route technique
 
@@ -140,8 +173,8 @@ avec `smoltcp`), qui appelle `Engine::check_tls` sur le flux réassemblé.
 | Listes signées Ed25519, anti-retour en arrière, outil serveur | ✅ fait, testé |
 | PIN Argon2id avec blocage progressif | ✅ fait, testé (pas encore branché dans l'UI) |
 | Liaison JNI | ✅ fait, testé sur JVM |
-| Android étape 1 : VpnService mode DNS + Device Owner + provisionnement QR | ✏️ écrit, à compiler et tester sur téléphone |
-| Android étape 2 : tunnel complet + relais | ⏳ prochaine étape |
+| Tunnel complet : pile TCP/IP, relais TCP/UDP, SNI, DNS UDP et TCP | ✅ fait, testé sur une vraie interface TUN |
+| Android : VpnService (tunnel complet + mode DNS de secours), Device Owner, provisionnement QR | ✏️ écrit, à compiler et tester sur téléphone |
 | Équipe rouge : tentatives de contournement sur le prototype | ⏳ semaine 3 |
 | Serveur (Supabase) : comptes, appareils, demandes d'ouverture, publication des listes | ⏳ |
 | Console parent + landing bêta (Next.js) | ⏳ semaine 4 |

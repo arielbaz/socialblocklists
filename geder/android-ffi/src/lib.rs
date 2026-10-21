@@ -1,18 +1,19 @@
 //! Liaison JNI pour `dev.geder.core.GederEngine` (application Android).
 //!
-//! Le moteur est protégé par un `Mutex` : le VpnService l'appelle depuis plusieurs
-//! threads (lecture TUN, réponses DNS amont, minuterie de purge).
+//! Un handle regroupe le moteur (partagé par un `Mutex`) et, s'il tourne, le tunnel.
+//! Le VpnService appelle ces fonctions depuis plusieurs threads ; la classe Kotlin
+//! garantit qu'aucun appel n'est en cours pendant `nativeFree`.
 
 use std::net::{Ipv4Addr, Ipv6Addr};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
 use ed25519_dalek::VerifyingKey;
-use jni::objects::{JByteArray, JClass, JObject, JObjectArray, JString};
+use geder_core::{DenyReason, DnsPacketAction, DomainName, Engine, EngineConfig, PacketVerdict};
+use geder_tunnel::{Events, Protect, ProtectedDialer, RunningTunnel, TunnelConfig};
+use jni::objects::{GlobalRef, JByteArray, JClass, JObject, JObjectArray, JString, JValue};
 use jni::sys::{jboolean, jbyteArray, jint, jlong, jstring, JNI_FALSE, JNI_TRUE};
-use jni::JNIEnv;
-
-use crate::engine::{DenyReason, DnsPacketAction, Engine, EngineConfig, PacketVerdict};
+use jni::{JNIEnv, JavaVM};
 
 /// Codes renvoyés par `nativeClassifyPacket` (miroir de `GederEngine.kt`).
 mod code {
@@ -36,22 +37,40 @@ mod dns_code {
     pub const DROP: u8 = 2;
 }
 
-fn engine<'a>(handle: jlong) -> Option<&'a Mutex<Engine>> {
+struct Shared {
+    engine: Arc<Mutex<Engine>>,
+    tunnel: Mutex<Option<RunningTunnel>>,
+}
+
+fn shared<'a>(handle: jlong) -> Option<&'a Shared> {
     // SAFETY : `handle` vient de `nativeNew` et n'est libéré que par `nativeFree`,
-    // que la classe Kotlin appelle une seule fois après le dernier usage.
-    unsafe { (handle as *const Mutex<Engine>).as_ref() }
+    // que la classe Kotlin appelle une seule fois, sous verrou exclusif.
+    unsafe { (handle as *const Shared).as_ref() }
+}
+
+/// Verrou du moteur ; un verrou empoisonné garde l'état existant (refus par défaut).
+fn lock(engine: &Mutex<Engine>) -> MutexGuard<'_, Engine> {
+    engine.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 fn with_engine<R>(handle: jlong, default: R, f: impl FnOnce(&mut Engine) -> R) -> R {
-    match engine(handle).map(|m| m.lock()) {
-        Some(Ok(mut e)) => f(&mut e),
-        // Mutex empoisonné ou handle nul : on refuse (fail-closed) via la valeur par défaut.
-        _ => default,
+    match shared(handle) {
+        Some(s) => f(&mut lock(&s.engine)),
+        // Handle nul (moteur fermé) : réponse « refus » donnée par l'appelant.
+        None => default,
     }
 }
 
 fn byte_array(env: &mut JNIEnv, data: &[u8]) -> jbyteArray {
     env.byte_array_from_slice(data).map(JByteArray::into_raw).unwrap_or(std::ptr::null_mut())
+}
+
+fn error_string(env: &mut JNIEnv, msg: Option<String>) -> jstring {
+    match msg {
+        None => JObject::null().into_raw(),
+        // Si la création échoue, la JVM a une exception en attente : jamais un faux succès.
+        Some(msg) => env.new_string(msg).map(JString::into_raw).unwrap_or(std::ptr::null_mut()),
+    }
 }
 
 #[no_mangle]
@@ -62,6 +81,11 @@ pub extern "system" fn Java_dev_geder_core_GederEngine_nativeNew(
     resolver_v4: JByteArray,
     resolver_v6: JByteArray,
 ) -> jlong {
+    #[cfg(target_os = "android")]
+    android_logger::init_once(
+        android_logger::Config::default().with_max_level(log::LevelFilter::Info).with_tag("GederCore"),
+    );
+
     let mut trusted = Vec::new();
     let n = env.get_array_length(&keys).unwrap_or(0);
     for i in 0..n {
@@ -80,21 +104,23 @@ pub extern "system" fn Java_dev_geder_core_GederEngine_nativeNew(
     if let Ok(v6) = env.convert_byte_array(&resolver_v6) {
         config.resolver_v6 = <[u8; 16]>::try_from(v6.as_slice()).ok().map(Ipv6Addr::from);
     }
-    Box::into_raw(Box::new(Mutex::new(Engine::new(config, trusted)))) as jlong
+    let shared = Shared { engine: Arc::new(Mutex::new(Engine::new(config, trusted))), tunnel: Mutex::new(None) };
+    Box::into_raw(Box::new(shared)) as jlong
 }
 
 #[no_mangle]
 pub extern "system" fn Java_dev_geder_core_GederEngine_nativeFree(_env: JNIEnv, _class: JClass, handle: jlong) {
     if handle != 0 {
-        // SAFETY : voir `engine()` ; la classe Kotlin remet son handle à 0 juste avant.
-        drop(unsafe { Box::from_raw(handle as *mut Mutex<Engine>) });
+        // SAFETY : voir `shared()` ; la classe Kotlin remet son handle à 0 juste avant.
+        // Le tunnel éventuel est arrêté par le Drop de RunningTunnel.
+        drop(unsafe { Box::from_raw(handle as *mut Shared) });
     }
 }
 
 /// Renvoie `null` si la liste est chargée, sinon le message d'erreur.
 #[no_mangle]
 pub extern "system" fn Java_dev_geder_core_GederEngine_nativeLoadList(
-    env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
     data: JByteArray,
@@ -105,11 +131,7 @@ pub extern "system" fn Java_dev_geder_core_GederEngine_nativeLoadList(
         }),
         Err(_) => Some("liste illisible".to_owned()),
     };
-    // Si la création de la chaîne échoue, la JVM a une exception en attente : jamais un faux succès.
-    match err {
-        None => JObject::null().into_raw(),
-        Some(msg) => env.new_string(msg).map(JString::into_raw).unwrap_or(std::ptr::null_mut()),
-    }
+    error_string(&mut env, err)
 }
 
 #[no_mangle]
@@ -153,7 +175,7 @@ pub extern "system" fn Java_dev_geder_core_GederEngine_nativeClassifyPacket(
     })
 }
 
-/// Traite un paquet IP adressé à notre résolveur. Format du tableau renvoyé :
+/// Traite un paquet IP adressé à notre résolveur (mode DNS). Format du tableau renvoyé :
 /// - `[0, <requête DNS>]` : envoyer la requête au résolveur amont, puis appeler
 ///   `nativeCompleteDnsPacket` avec le paquet d'origine et la réponse ;
 /// - `[1, n, <n octets : domaine bloqué>, <paquet IP>]` : écrire le paquet sur la TUN
@@ -204,4 +226,99 @@ pub extern "system" fn Java_dev_geder_core_GederEngine_nativeCompleteDnsPacket(
 #[no_mangle]
 pub extern "system" fn Java_dev_geder_core_GederEngine_nativePurge(_env: JNIEnv, _class: JClass, handle: jlong) {
     with_engine(handle, (), |e| e.purge(Instant::now()));
+}
+
+/// Rappels vers l'objet Kotlin `GederEngine.TunnelCallbacks`, depuis les threads du tunnel.
+struct JavaCallbacks {
+    vm: JavaVM,
+    obj: GlobalRef,
+}
+
+impl JavaCallbacks {
+    fn call<R>(&self, f: impl FnOnce(&mut JNIEnv, &JObject) -> jni::errors::Result<R>) -> Option<R> {
+        // Les threads du runtime sont attachés une fois pour toutes (détachés à leur fin).
+        let mut env = self.vm.attach_current_thread_permanently().ok()?;
+        let result = f(&mut env, self.obj.as_obj());
+        if env.exception_check().unwrap_or(false) {
+            let _ = env.exception_clear();
+            return None;
+        }
+        result.ok()
+    }
+}
+
+struct JavaProtect(Arc<JavaCallbacks>);
+
+impl Protect for JavaProtect {
+    fn protect(&self, fd: i32) -> bool {
+        self.0.call(|env, obj| env.call_method(obj, "protect", "(I)Z", &[JValue::Int(fd)])?.z()).unwrap_or(false)
+    }
+}
+
+impl Events for JavaCallbacks {
+    fn blocked_domain(&self, domain: &DomainName) {
+        self.call(|env, obj| {
+            let name = env.new_string(domain.as_str())?;
+            env.call_method(obj, "onBlocked", "(Ljava/lang/String;)V", &[JValue::Object(&name)])?;
+            Ok(())
+        });
+    }
+}
+
+/// Démarre le tunnel complet sur le descripteur TUN `fd` (dont il devient propriétaire).
+/// `callbacks` implémente `protect(int): boolean` et `onBlocked(String)`.
+/// Renvoie `null` si le tunnel tourne, sinon la raison de l'échec.
+#[no_mangle]
+pub extern "system" fn Java_dev_geder_core_GederEngine_nativeStartTunnel(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    fd: jint,
+    mtu: jint,
+    callbacks: JObject,
+) -> jstring {
+    let err = start_tunnel(&mut env, handle, fd, mtu, &callbacks).err();
+    error_string(&mut env, err)
+}
+
+fn start_tunnel(env: &mut JNIEnv, handle: jlong, fd: jint, mtu: jint, callbacks: &JObject) -> Result<(), String> {
+    let shared = shared(handle).ok_or("moteur indisponible")?;
+    let mut slot = shared.tunnel.lock().unwrap_or_else(|e| e.into_inner());
+    if slot.is_some() {
+        return Err("tunnel déjà démarré".into());
+    }
+    let callbacks = Arc::new(JavaCallbacks {
+        vm: env.get_java_vm().map_err(|e| e.to_string())?,
+        obj: env.new_global_ref(callbacks).map_err(|e| e.to_string())?,
+    });
+    let config = TunnelConfig { mtu: u16::try_from(mtu).map_err(|_| "MTU invalide")?, ..Default::default() };
+    let dialer = Arc::new(ProtectedDialer(JavaProtect(callbacks.clone())));
+    let tunnel = RunningTunnel::spawn_from_fd(fd, shared.engine.clone(), dialer, callbacks, config)
+        .map_err(|e| format!("démarrage du tunnel : {e}"))?;
+    *slot = Some(tunnel);
+    Ok(())
+}
+
+/// Arrête le tunnel s'il tourne (la TUN est fermée).
+#[no_mangle]
+pub extern "system" fn Java_dev_geder_core_GederEngine_nativeStopTunnel(_env: JNIEnv, _class: JClass, handle: jlong) {
+    if let Some(shared) = shared(handle) {
+        let tunnel = shared.tunnel.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let Some(t) = tunnel {
+            if let Err(e) = t.stop() {
+                log::warn!("arrêt du tunnel : {e}");
+            }
+        }
+    }
+}
+
+/// Test seulement : crée une TUN Linux `10.201.0.1/24` et renvoie son descripteur,
+/// pour exercer `nativeStartTunnel` depuis une JVM de bureau.
+#[cfg(all(feature = "jni-test", target_os = "linux"))]
+#[no_mangle]
+pub extern "system" fn Java_dev_geder_core_GederEngine_nativeTestCreateTun(_env: JNIEnv, _class: JClass) -> jint {
+    use std::os::fd::IntoRawFd;
+    let mut config = tun::Configuration::default();
+    config.tun_name("geder-jni0").address((10, 201, 0, 1)).netmask((255, 255, 255, 0)).mtu(1500).up();
+    tun::create(&config).map(|d| d.into_raw_fd()).unwrap_or(-1)
 }

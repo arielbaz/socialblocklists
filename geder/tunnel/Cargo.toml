@@ -1,0 +1,18 @@
+[package]
+name = "geder-tunnel"
+description = "Relais du tunnel complet : pile TCP/IP en espace utilisateur devant le moteur GEDER"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+geder-core.workspace = true
+ipstack = "1.0.1"
+tun = { version = "0.8.14", features = ["async"] }
+tokio = { version = "1.54", features = ["rt-multi-thread", "net", "io-util", "time", "sync", "macros"] }
+socket2 = "0.6"
+log = "0.4"
+
+[dev-dependencies]
+ed25519-dalek.workspace = true

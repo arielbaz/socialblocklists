@@ -18,9 +18,6 @@ pub mod packet;
 pub mod pin;
 pub mod tls;
 
-#[cfg(feature = "android")]
-mod ffi_android;
-
 pub use domain::{DomainName, DomainSet, Rule, RuleKind};
 pub use engine::{DenyReason, DnsAction, DnsPacketAction, Engine, EngineConfig, EngineError, PacketVerdict, Verdict};
 pub use list::AllowList;

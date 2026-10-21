@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["core", "tools/geder-list"]
+members = ["core", "tunnel", "android-ffi", "tools/geder-list"]
 
 [workspace.package]
 version = "0.1.0"

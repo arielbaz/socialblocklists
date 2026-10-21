@@ -34,17 +34,17 @@ android {
     }
 }
 
-// Compile le moteur Rust (geder-core) pour chaque ABI dans src/main/jniLibs.
+// Compile libgeder (moteur + tunnel, crate geder-android) pour chaque ABI dans src/main/jniLibs.
 // Prérequis : NDK installé, `cargo install cargo-ndk`, cibles rustup Android ajoutées.
 val buildRustCore by tasks.registering(Exec::class) {
     group = "build"
-    description = "Compile geder-core (Rust) en bibliothèques natives Android"
+    description = "Compile libgeder (moteur + tunnel Rust) pour Android"
     workingDir = rootDir.resolve("..")
     commandLine(
         "cargo", "ndk",
         "-t", "arm64-v8a", "-t", "armeabi-v7a", "-t", "x86_64",
         "-o", projectDir.resolve("src/main/jniLibs").absolutePath,
-        "build", "--release", "-p", "geder-core", "--features", "android",
+        "build", "--release", "-p", "geder-android",
     )
 }
 tasks.named("preBuild") { dependsOn(buildRustCore) }
