@@ -1,0 +1,34 @@
+name: GEDER
+
+on:
+  push:
+    paths: ["geder/**", ".github/workflows/geder.yml"]
+  pull_request:
+    paths: ["geder/**", ".github/workflows/geder.yml"]
+
+defaults:
+  run:
+    working-directory: geder
+
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --features geder-core/android -- -D warnings
+      - name: Tests du moteur
+        run: cargo test --workspace
+      - name: Listes de départ valides
+        run: cargo run -q -p geder-list -- check lists/*.txt
+      - name: Liaison JNI (JVM de bureau)
+        run: ./core/jni-test/run.sh

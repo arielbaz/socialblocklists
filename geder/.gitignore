@@ -1,0 +1,18 @@
+/target/
+
+# Android
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/local.properties
+/android/app/src/main/jniLibs/
+# Générés par scripts/dev-sign-lists.sh : clé de dev et listes signées avec elle.
+/android/dev-keys/
+/android/app/src/main/assets/lists/
+/android/app/src/main/assets/keys/
+
+# Jamais de clé secrète dans Git.
+*.sec
+
+# Test JNI
+/core/jni-test/out/

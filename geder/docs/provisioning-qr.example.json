@@ -1,0 +1,7 @@
+{
+  "android.app.extra.PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME": "dev.geder.app/.GederAdminReceiver",
+  "android.app.extra.PROVISIONING_DEVICE_ADMIN_PACKAGE_DOWNLOAD_LOCATION": "https://geder.app/android/geder.apk",
+  "android.app.extra.PROVISIONING_DEVICE_ADMIN_SIGNATURE_CHECKSUM": "REMPLACER_PAR_SHA256_BASE64URL_DU_CERTIFICAT_DE_SIGNATURE",
+  "android.app.extra.PROVISIONING_LEAVE_ALL_SYSTEM_APPS_ENABLED": true,
+  "android.app.extra.PROVISIONING_SKIP_ENCRYPTION": false
+}

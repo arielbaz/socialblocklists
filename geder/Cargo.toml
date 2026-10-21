@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = ["core", "tools/geder-list"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "LicenseRef-Aribaz-Proprietary"
+publish = false
+
+[workspace.dependencies]
+geder-core = { path = "core" }
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+base64 = "0.22"
+rand_core = { version = "0.6", features = ["getrandom"] }
+argon2 = "0.5"
+thiserror = "2"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"

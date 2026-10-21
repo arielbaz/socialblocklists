@@ -1,0 +1,13 @@
+[package]
+name = "geder-list"
+description = "Outil serveur : génération de clés, signature et vérification des listes GEDER"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+geder-core.workspace = true
+ed25519-dalek.workspace = true
+base64.workspace = true
+rand_core.workspace = true

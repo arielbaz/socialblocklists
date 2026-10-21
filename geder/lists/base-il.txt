@@ -1,0 +1,43 @@
+!geder-list 1
+!name base-il
+!version 2026102101
+# Liste de départ Israël : administrations, santé, transports, banques, Torah.
+# À valider par le responsable filtrage et le Rav superviseur avant diffusion.
+
+# --- Administrations (dont Bituah Leumi : btl.gov.il) ---
+gov.il
+*.gov.il
+
+# --- Santé (Koupot Holim) ---
+clalit.co.il
+*.clalit.co.il
+maccabi4u.co.il
+*.maccabi4u.co.il
+meuhedet.co.il
+*.meuhedet.co.il
+leumit.co.il
+*.leumit.co.il
+
+# --- Transports et courrier ---
+rail.co.il
+*.rail.co.il
+israelpost.co.il
+*.israelpost.co.il
+
+# --- Banques ---
+bankhapoalim.co.il
+*.bankhapoalim.co.il
+leumi.co.il
+*.leumi.co.il
+discountbank.co.il
+*.discountbank.co.il
+mizrahi-tefahot.co.il
+*.mizrahi-tefahot.co.il
+
+# --- Torah ---
+sefaria.org
+*.sefaria.org
+chabad.org
+*.chabad.org
+hebcal.com
+*.hebcal.com

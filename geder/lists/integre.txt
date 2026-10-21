@@ -1,0 +1,31 @@
+!geder-list 1
+!name integre
+!version 1
+# Règles intégrées au binaire du moteur, toujours actives, même sans liste
+# téléchargée (mode « fail-closed »). À garder très court : tout ajout ici
+# demande une nouvelle version de l'application.
+
+# --- Service GEDER (domaine à confirmer après dépôt) ---
+geder.app
+*.geder.app
+
+# --- Urgences : jamais bloquées ---
+# Pikud HaOref (alertes)
+oref.org.il
+www.oref.org.il
+# Magen David Adom
+mdais.org
+www.mdais.org
+
+# --- Vérifications de connectivité des systèmes ---
+# Sans elles, le téléphone ou le PC affiche « pas d'Internet ».
+connectivitycheck.gstatic.com
+connectivitycheck.android.com
+www.msftconnecttest.com
+dns.msftncsi.com
+captive.apple.com
+
+# --- Heure réseau (horloge anti-triche) ---
+time.android.com
+time.windows.com
+time.apple.com

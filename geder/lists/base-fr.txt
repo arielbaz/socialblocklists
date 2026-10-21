@@ -1,0 +1,59 @@
+!geder-list 1
+!name base-fr
+!version 2026102101
+# Liste de départ France : administrations, santé, transports, banques, Torah.
+# À valider par le responsable filtrage et le Rav superviseur avant diffusion.
+# Les sites de banques chargent souvent des ressources tierces (CDN, anti-fraude) :
+# tester chaque site sur appareil et compléter la liste avant la bêta.
+
+# --- Administrations ---
+impots.gouv.fr
+*.impots.gouv.fr
+service-public.fr
+*.service-public.fr
+franceconnect.gouv.fr
+*.franceconnect.gouv.fr
+ants.gouv.fr
+*.ants.gouv.fr
+caf.fr
+*.caf.fr
+francetravail.fr
+*.francetravail.fr
+
+# --- Santé ---
+ameli.fr
+*.ameli.fr
+doctolib.fr
+*.doctolib.fr
+
+# --- Transports et courrier ---
+sncf-connect.com
+*.sncf-connect.com
+ratp.fr
+*.ratp.fr
+laposte.fr
+*.laposte.fr
+
+# --- Banques ---
+credit-agricole.fr
+*.credit-agricole.fr
+labanquepostale.fr
+*.labanquepostale.fr
+lcl.fr
+*.lcl.fr
+caisse-epargne.fr
+*.caisse-epargne.fr
+banquepopulaire.fr
+*.banquepopulaire.fr
+boursorama.com
+*.boursorama.com
+
+# --- Torah ---
+torah-box.com
+*.torah-box.com
+sefaria.org
+*.sefaria.org
+chabad.org
+*.chabad.org
+hebcal.com
+*.hebcal.com
