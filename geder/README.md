@@ -39,6 +39,8 @@ geder/
 ├── tools/geder-list/     Outil serveur : clés, signature, vérification, test de domaine
 ├── lists/                Listes sources (non signées) : intégrée, France, Israël
 ├── android/              Prototype Android (Kotlin) : VpnService + Device Owner
+├── server/               Supabase : schéma, droits (RLS), demandes d'ouverture — voir server/README.md
+├── web/                  Site Next.js : page d'attente FR / HE + inscription bêta — voir web/README.md
 └── docs/                 Exemple de QR code de provisionnement
 ```
 
@@ -100,9 +102,12 @@ geder-list verify cle.pub base-fr.signed.txt
 geder-list match lists/base-fr.txt www.impots.gouv.fr www.youtube.com
 ```
 
-La CI (`.github/workflows/geder.yml`) lance le formatage, Clippy, les tests, la
-validation des listes, le test de bout en bout du tunnel et le test JNI à chaque
-modification de `geder/`. Sur ce dépôt (un fork), il faut d'abord activer les
+La CI (`.github/workflows/geder.yml`) lance à chaque modification de `geder/` :
+- le formatage, Clippy et les tests Rust ;
+- la validation des listes ;
+- le test de bout en bout du tunnel et le test JNI ;
+- les tests SQL/RLS du serveur ;
+- la vérification des types, les tests et le build du site. Sur ce dépôt (un fork), il faut d'abord activer les
 workflows dans l'onglet Actions.
 
 ## Prototype Android
@@ -176,8 +181,10 @@ réinitialisation d'usine. Un exemple de contenu est dans `docs/provisioning-qr.
 | Tunnel complet : pile TCP/IP, relais TCP/UDP, SNI, DNS UDP et TCP | ✅ fait, testé sur une vraie interface TUN |
 | Android : VpnService (tunnel complet + mode DNS de secours), Device Owner, provisionnement QR | ✏️ écrit, à compiler et tester sur téléphone |
 | Équipe rouge : tentatives de contournement sur le prototype | ⏳ semaine 3 |
-| Serveur (Supabase) : comptes, appareils, demandes d'ouverture, publication des listes | ⏳ |
-| Console parent + landing bêta (Next.js) | ⏳ semaine 4 |
+| Serveur Supabase : schéma, droits RLS, circuit des demandes d'ouverture | ✅ fait, testé sur PostgreSQL |
+| Page d'attente FR / HE + inscription bêta | ✅ fait, testé (à relire avant mise en ligne) |
+| Enrôlement des appareils, envoi des demandes depuis l'appareil, publication automatique des listes | ⏳ prochaine étape |
+| Console parent et console de l'équipe filtrage | ⏳ |
 | Windows (service SYSTEM + WFP), extension navigateur | ⏳ MVP |
 | iOS / macOS (Network Extension, MDM) | ⏳ phase 2 |
 

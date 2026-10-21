@@ -37,3 +37,29 @@ jobs:
           sudo "$bin" --ignored
       - name: Liaison JNI, tunnel compris (JVM de bureau, root)
         run: ./core/jni-test/run.sh --tun
+
+  supabase:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: PostgreSQL 16
+        run: sudo apt-get update -q && sudo apt-get install -y -q postgresql-16
+      - name: Migrations et tests RLS
+        run: ./server/supabase/tests/run.sh
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: geder/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: geder/web/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
